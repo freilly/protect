@@ -21,6 +21,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import com.amazonaws.AmazonServiceException;
+import java.util.regex.*;
 
 
 @Component
@@ -39,63 +40,61 @@ public class ScheduledTasks {
 
     @Scheduled(fixedRate = 40000)
     public void reportCurrentTime() throws IOException, InterruptedException {
-        String bucketName = "test.protect.usage";
-        log.info("Checking for bucket??", bucketName);
+        String bucketName = "test.protect.usage"; //TODO correct bucket name
+
+
+
+        log.info("Checking for bucket??" + bucketName);
         final AmazonS3 s3 = AmazonS3ClientBuilder.standard().withRegion(Regions.EU_WEST_1).build();
         try {
 
             String unProcessedPrefix = "unprocessed/";
 
-            ListObjectsV2Request req = new ListObjectsV2Request().withBucketName(bucketName).withPrefix(unProcessedPrefix);
+
+            ListObjectsV2Request req = new ListObjectsV2Request().withBucketName(bucketName).withPrefix(unProcessedPrefix).withStartAfter(unProcessedPrefix);
             ListObjectsV2Result result;
 
             result = s3.listObjectsV2(req);
             List<S3ObjectSummary> objects = result.getObjectSummaries();
             for (S3ObjectSummary os: objects) {
-                log.info("* " + os.getKey());
+                String unProcessedFile = os.getKey();
+                if(isFileNameFormatCorrect(unProcessedFile.replace("unprocessed/", ""))){
+                    String processedFile =  unProcessedFile.replace("unprocessed/", "processed/");
+                    log.info("* " + unProcessedFile);
+                    log.info("*2 " + processedFile);
 
+
+                    S3Object s3object = s3.getObject(bucketName, unProcessedFile);
+                    log.info("retrieved file");
+
+                    S3ObjectInputStream inputStream = s3object.getObjectContent();
+
+
+                    log.info("Moving file to batch import folder:", unProcessedFile);
+                    FileUtils.copyInputStreamToFile(inputStream, new File("/home/ec2-user/protect/" + processedFile));
+                    log.info("Completed Download succesfully");
+
+
+                    log.info("Copying " + unProcessedFile + " to processed directory");
+                    s3.copyObject(bucketName, os.getKey(), bucketName, processedFile);
+
+                    log.info("Deleting " + unProcessedFile + "from unprocessed directory");
+                    s3.deleteObject(bucketName, os.getKey());
+                }else{
+                    log.info("File name does not match naming convention:" + unProcessedFile);
+                }
 
             }
 
-
-            String unprocessedFile = "unprocessed/testObject.txt";
-            String processedFile = "processed/testObject.txt";
-
-
-
-            /*S3Object s3object = s3.getObject(bucketName, unprocessedFile);
-            log.info("retreived file");
-
-            s3.copyObject(bucketName, unprocessedFile, bucketName, processedFile);
-
-            //s3.deleteObject(bucketName, unprocessedFile);
-
-
-            S3ObjectInputStream inputStream = s3object.getObjectContent();
-
-
-            log.info("Movingfile to batch import folder:", s3object.getKey());
-            FileUtils.copyInputStreamToFile(inputStream, new File("/home/ec2-user/protect/downloadedFile.txt"));
-
-            log.info("Completed succesfully");*/
-
-
-
-           /* TransferManager transferManager = TransferManagerBuilder.standard().build();
-
-            try {
-                MultipleFileDownload multipleFileDownload = transferManager.downloadDirectory(
-                        bucketName, unProcessedPrefix, new File("/home/ec2-user/protect/"));
-                multipleFileDownload.waitForCompletion();
-            } catch (AmazonServiceException e) {
-                log.info("Error transfering multiple files");
-                System.exit(1);
-            }*/
         } catch (AmazonServiceException e) {
             log.info("Exception: ", e);
             System.err.println(e.getErrorMessage());
             System.exit(1);
         }
+    }
+
+    private boolean isFileNameFormatCorrect(String filename){
+        return Pattern.matches("([A-Z])\\w+_Usage_([12]\\d{3}(0[1-9]|1[0-2])(0[1-9]|[12]\\d|3[01]))_[1-9]+.csv", filename);
     }
 
 }
